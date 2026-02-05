@@ -1,0 +1,86 @@
+Ce code permet de classifier les images Landsat pour toutes les régions depuis le 18 mars 2013 jusqu'à présent.
+Ne modifiez pas les palettes.
+
+/***************************************
+ * 1. CHARGEMENT DU MODÈLE LANDSAT PRÉ-ENTRAÎNÉ
+ ***************************************/
+// Chargement de votre nouveau modèle Landsat
+var classifier = ee.Classifier.load('projects/plateau-de-meknes/assets/landsat_model');
+
+// Bandes Landsat 8 (doivent correspondre à celles utilisées lors de l'entraînement)
+var bands = ['SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B6', 'SR_B7'];
+
+var palette = [
+  '#2ca25f', '#7fbc41', '#556b2f', '#ffeb3b', '#fff2a6', 
+  '#ff66cc', '#0066ff', '#b8e186', '#7fbc41',
+  '#5ca076', '#d9d9d9', '#8da0cb', '#c7e9c0'
+];
+
+/***************************************
+ * 2. CONFIGURATION DE L'INTERFACE (TIMELINE)
+ ***************************************/
+print("1. Utilisez l'outil 'Rectangle' ou 'Polygone' à gauche pour dessiner une zone.");
+print("2. Choisissez vos dates (Landsat 8 disponible depuis 2013).");
+
+var datePanel = ui.Panel([
+  ui.Label('Timeline Landsat - Dates', {fontWeight: 'bold', fontSize: '16px'}),
+  ui.Label('Début:'), ui.Textbox('2023-01-01', '2023-01-01'),
+  ui.Label('Fin:'), ui.Textbox('2023-12-31', '2023-12-31'),
+  ui.Button({
+    label: 'Lancer la Classification Landsat',
+    onClick: runClassification,
+    style: {stretch: 'horizontal'}
+  })
+], ui.Panel.Layout.flow('vertical'), {width: '230px', position: 'bottom-left'});
+
+Map.add(datePanel);
+
+/***************************************
+ * 3. FONCTION DE CLASSIFICATION LANDSAT
+ ***************************************/
+function runClassification() {
+  // Récupérer la zone dessinée (roi)
+  var roi = Map.drawingTools().layers().get(0).getEeObject();
+  
+  if (!roi) {
+    print("⚠️ Erreur: Veuillez dessiner une zone sur la carte d'abord !");
+    return;
+  }
+
+  // Récupérer les dates depuis l'interface
+  var start = datePanel.widgets().get(2).getValue();
+  var end = datePanel.widgets().get(4).getValue();
+  
+  // Nettoyer la carte précédente
+  Map.layers().reset();
+  
+  // Prétraitement Landsat 8 Collection 2 Level 2
+  var image = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+    .filterBounds(roi)
+    .filterDate(start, end)
+    .filter(ee.Filter.lt('CLOUD_COVER', 20)) // Filtre spécifique Landsat
+    .select(bands)
+    .median() 
+    .clip(roi);
+
+  // Application du modèle Landsat
+  var classified = image.classify(classifier);
+
+  // Affichage
+  // Note: Min/Max ajustés pour les valeurs Landsat C2 L2 (Scale factor ~0.0000275)
+  Map.addLayer(image, {min: 7000, max: 18000, bands: ['SR_B5', 'SR_B4', 'SR_B3']}, 'Landsat 8 (Infrarouge IRC)');
+  Map.addLayer(classified, {min: 0, max: 12, palette: palette}, 'Classification Landsat ' + start);
+  
+  print("✅ Classification Landsat terminée (" + start + ")");
+}
+
+/***************************************
+ * 4. INITIALISATION DES OUTILS
+ ***************************************/
+Map.setControlVisibility({drawingToolsControl: true});
+Map.drawingTools().setLinked(false);
+Map.drawingTools().setDrawModes(['polygon', 'rectangle']);
+Map.drawingTools().addLayer([]); // Calque vide pour le dessin utilisateur
+
+// Centrage par défaut (Maroc)
+Map.setCenter(-7.0, 31.0, 6);
