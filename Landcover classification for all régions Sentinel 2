@@ -1,0 +1,78 @@
+Ce code permet la classification des scènes sentinel 2 de 28/03/2017 jusqu'à présent.
+Ne changez pas les palettes.
+-------------------
+
+/***************************************
+ * 1. CHARGEMENT DU MODÈLE PRÉ-ENTRAÎNÉ
+ ***************************************/
+var classifier = ee.Classifier.load('projects/plateau-de-meknes/assets/landcoverfinalmodel');
+
+var bands = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12'];
+var palette = [
+  '#2ca25f', '#7fbc41', '#556b2f', '#ffeb3b', '#fff2a6', 
+  '#ff66cc', '#0066ff', '#b8e186', '#7fbc41',
+  '#5ca076', '#d9d9d9', '#8da0cb', '#c7e9c0'
+];
+
+/***************************************
+ * 2. CONFIGURATION DE L'INTERFACE (TIMELINE)
+ ***************************************/
+// Instructions pour l'utilisateur
+print("1. Utilisez l'outil 'Rectangle' ou 'Polygone' à gauche pour dessiner une zone.");
+print("2. Changez les dates ci-dessous pour mettre à jour la classification.");
+
+var datePanel = ui.Panel([
+  ui.Label('Timeline - Choisir les dates', {fontWeight: 'bold'}),
+  ui.Label('Début:'), ui.Textbox('2023-01-01', '2023-01-01'),
+  ui.Label('Fin:'), ui.Textbox('2023-12-31', '2023-12-31'),
+  ui.Button('Lancer la Classification', runClassification)
+], ui.Panel.Layout.flow('vertical'), {width: '200px', position: 'bottom-left'});
+
+Map.add(datePanel);
+
+/***************************************
+ * 3. FONCTION DE CLASSIFICATION
+ ***************************************/
+function runClassification() {
+  // Récupérer la zone dessinée (roi)
+  var roi = Map.drawingTools().layers().get(0).getEeObject();
+  
+  if (!roi) {
+    print("Erreur: Veuillez dessiner une zone sur la carte d'abord !");
+    return;
+  }
+
+  // Récupérer les dates
+  var start = datePanel.widgets().get(2).getValue();
+  var end = datePanel.widgets().get(4).getValue();
+  
+  // Nettoyer la carte précédente
+  Map.layers().reset();
+  
+  // Prétraitement Sentinel-2 ultra-rapide
+  var image = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+    .filterBounds(roi)
+    .filterDate(start, end)
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 15))
+    .select(bands)
+    .median() // Réduction stable pour larges zones
+    .clip(roi);
+
+  // Application du modèle
+  var classified = image.classify(classifier);
+
+  // Affichage
+  Map.addLayer(image, {min: 0, max: 3000, bands: ['B8', 'B4', 'B3']}, 'Sentinel-2 (Infrarouge)');
+  Map.addLayer(classified, {min: 0, max: 12, palette: palette}, 'Classification ' + start);
+  
+  print("Classification terminée pour la période : " + start + " à " + end);
+}
+
+/***************************************
+ * 4. INITIALISATION
+ ***************************************/
+Map.setControlVisibility({drawingToolsControl: true});
+Map.drawingTools().setLinked(false);
+Map.drawingTools().setDrawModes(['polygon', 'rectangle']);
+// On crée un calque de dessin vide au départ
+Map.drawingTools().addLayer([]);
