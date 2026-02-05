@@ -1,0 +1,78 @@
+Ce code permet les prévision de la période entre 2026 et 2050
+Ne changez pas les couleurs de palette.
+
+/***************************************
+ * 1. CONFIGURATION DU MODÈLE
+ ***************************************/
+var classifier = ee.Classifier.load('projects/plateau-de-meknes/assets/landcoverfinalmodel');
+var bands = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12'];
+var palette = ['#2ca25f', '#7fbc41', '#556b2f', '#ffeb3b', '#fff2a6', '#ff66cc', '#0066ff', '#b8e186', '#7fbc41', '#5ca076', '#d9d9d9', '#8da0cb', '#c7e9c0'];
+
+/***************************************
+ * 2. INTERFACE UTILISATEUR
+ ***************************************/
+var panel = ui.Panel({style: {width: '280px', position: 'bottom-left', padding: '10px'}});
+Map.add(panel);
+
+panel.add(ui.Label('Projection Landcover 2050', {fontSize: '18px', fontWeight: 'bold'}));
+panel.add(ui.Label('1. Dessinez une zone (Rectangle/Polygone).'));
+
+var slider = ui.Slider({
+  min: 2026, max: 2050, value: 2050, step: 1,
+  style: {stretch: 'horizontal'}
+});
+
+var button = ui.Button({
+  label: '🚀 Afficher la Projection',
+  style: {stretch: 'horizontal'}
+});
+
+panel.add(ui.Label('Choisir l\'année cible :')).add(slider).add(button);
+
+/***************************************
+ * 3. LOGIQUE DE PROJECTION
+ ***************************************/
+function runProjection() {
+  var roi = Map.drawingTools().layers().get(0).getEeObject();
+  if (!roi) { 
+    print("⚠️ Veuillez d'abord dessiner une zone !"); 
+    return; 
+  }
+
+  // A. Classification 2017 (Référence passée)
+  var img17 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+    .filterBounds(roi).filterDate('2017-01-01', '2017-12-31')
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+    .median().select(bands).classify(classifier);
+
+  // B. Classification 2025 (État actuel)
+  var img25 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+    .filterBounds(roi).filterDate('2024-01-01', '2025-12-31') // Utilise les données les plus récentes
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+    .median().select(bands).classify(classifier);
+
+  // C. Calcul de la vitesse de changement (Transition par pixel)
+  var change = img25.subtract(img17); 
+  
+  // D. Projection vers l'année choisie
+  var targetYear = slider.getValue();
+  var timeStep = (targetYear - 2025) / 8; // Intervalle de 8 ans (2025-2017)
+  
+  // Projection = État actuel + (Tendance * Temps futur)
+  var projection = img25.add(change.multiply(timeStep)).round().clip(roi);
+
+  // E. Affichage de la couche projetée uniquement
+  Map.layers().reset();
+  Map.addLayer(projection, {min: 0, max: 12, palette: palette}, 'Projection Landcover ' + targetYear);
+  
+  print("✅ Projection affichée pour l'année " + targetYear);
+}
+
+button.onClick(runProjection);
+
+/***************************************
+ * 4. INITIALISATION
+ ***************************************/
+Map.drawingTools().setDrawModes(['rectangle', 'polygon']);
+Map.drawingTools().addLayer([]);
+Map.setControlVisibility({drawingToolsControl: true});
