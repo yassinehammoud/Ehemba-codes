@@ -1,0 +1,107 @@
+Code qui permet le reboisement à partir de classification de données sentinel et calcul de superficie à reboisé en ha.
+Palette à ne pas changer.
+
+/***************************************
+ * 1. CHARGEMENT ET CONFIGURATION
+ ***************************************/
+var classifier = ee.Classifier.load('projects/plateau-de-meknes/assets/landcoverfinalmodel');
+var bands = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12'];
+
+// Palette de couleurs pour les 13 classes
+var palette = ['#2ca25f', '#7fbc41', '#556b2f', '#ffeb3b', '#fff2a6', '#ff66cc', '#0066ff', '#b8e186', '#7fbc41', '#5ca076', '#d9d9d9', '#8da0cb', '#c7e9c0'];
+
+/***************************************
+ * 2. INTERFACE UTILISATEUR
+ ***************************************/
+var mainPanel = ui.Panel({style: {width: '320px', position: 'bottom-left', padding: '15px'}});
+Map.add(mainPanel);
+
+mainPanel.add(ui.Label('Analyse de Reboisement', {fontSize: '20px', fontWeight: 'bold', color: '#2e7d32'}));
+mainPanel.add(ui.Label('1. Utilisez l\'icône polygone en haut à gauche pour détourer votre zone.', {fontSize: '12px', color: 'gray'}));
+
+// Sélection des périodes
+mainPanel.add(ui.Label('Période de Référence (Ancienne) :'));
+var start1 = ui.Textbox('2017-01-01'); mainPanel.add(start1);
+var end1   = ui.Textbox('2017-12-31'); mainPanel.add(end1);
+
+mainPanel.add(ui.Label('Période Actuelle (Février 2026) :'));
+var start2 = ui.Textbox('2025-01-01'); mainPanel.add(start2);
+var end2   = ui.Textbox('2026-02-05'); mainPanel.add(end2);
+
+var button = ui.Button({
+  label: 'Calculer la superficie à reboiser',
+  style: {stretch: 'horizontal', fontWeight: 'bold'}
+});
+var resultDisplay = ui.Label('Surface à reboiser : --- ha', {fontSize: '16px', fontWeight: 'bold', color: '#d32f2f', margin: '10px 0'});
+mainPanel.add(button).add(resultDisplay);
+
+/***************************************
+ * 3. LOGIQUE DE CALCUL DES PERTES (REBOISEMENT)
+ ***************************************/
+function calculateChange() {
+  // Récupérer la zone dessinée (Polygone ou Rectangle)
+  var roi = Map.drawingTools().layers().get(0).getEeObject();
+  if (!roi) { 
+    alert("⚠️ Veuillez d'abord dessiner un POLYGONE sur la carte !"); 
+    return; 
+  }
+
+  resultDisplay.setValue('⏳ Calcul en cours...');
+
+  // Fonction interne pour obtenir la classification d'une période
+  var getMap = function(s, e) {
+    var col = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+      .filterBounds(roi).filterDate(s, e)
+      .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 25))
+      .median().clip(roi);
+    return col.select(bands).classify(classifier);
+  };
+
+  // 1. Génération des cartes
+  var mapAncienne = getMap(start1.getValue(), end1.getValue());
+  var mapActuelle = getMap(start2.getValue(), end2.getValue());
+
+  // 2. Définition des classes forestières à surveiller (0=Forêt, 2=Mangrove, 8=Savane boisée, 9=Forêt galerie)
+  var etaitForet = mapAncienne.eq(0).or(mapAncienne.eq(2)).or(mapAncienne.eq(8)).or(mapAncienne.eq(9));
+  
+  // N'est plus une forêt aujourd'hui
+  var nEstPlusForet = mapActuelle.neq(0).and(mapActuelle.neq(2)).and(mapActuelle.neq(8)).and(mapActuelle.neq(9));
+
+  // La zone à reboiser est l'intersection des deux
+  var aReboiser = etaitForet.and(nEstPlusForet).selfMask();
+
+  // 3. CALCUL DE LA SUPERFICIE
+  // On multiplie chaque pixel par sa surface réelle (pixelArea)
+  var areaImage = aReboiser.multiply(ee.Image.pixelArea());
+  var areaStats = areaImage.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: roi,
+    scale: 10, // Résolution Sentinel-2
+    maxPixels: 1e13
+  });
+
+  // 4. MISE À JOUR DE LA CARTE ET DU TEXTE
+  Map.layers().reset();
+  Map.addLayer(mapActuelle, {min: 0, max: 12, palette: palette}, 'Occupation du sol 2026');
+  Map.addLayer(aReboiser, {palette: ['#FF0000']}, 'ZONES À REBOISER (Pert)');
+
+  // Conversion en Hectares (1 ha = 10 000 m²)
+  areaStats.evaluate(function(val) {
+    if (val && val.classification) {
+      var ha = (val.classification / 10000).toFixed(2);
+      resultDisplay.setValue('✅ Surface à reboiser : ' + ha + ' ha');
+    } else {
+      resultDisplay.setValue('✅ Surface à reboiser : 0 ha');
+    }
+  });
+}
+
+button.onClick(calculateChange);
+
+/***************************************
+ * 4. INITIALISATION DES OUTILS DE DESSIN
+ ***************************************/
+Map.drawingTools().setDrawModes(['polygon', 'rectangle']); // Active le polygone
+Map.drawingTools().addLayer([]); // Prêt pour le dessin
+Map.setControlVisibility({drawingToolsControl: true, layerList: true});
+Map.setCenter(-7.0, 31.0, 6);
