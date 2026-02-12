@@ -1,0 +1,58 @@
+// --- 1. CONFIGURATION DU PANNEAU INTERACTIF ---
+var panel = ui.Panel({
+  style: {width: '250px', padding: '10px'}
+});
+
+panel.add(ui.Label('Mosaïque Sentinel-1 (SAR)', {fontWeight: 'bold', fontSize: '18px'}));
+
+var startInput = ui.Textbox('Date de début (AAAA-MM-JJ)', '2023-01-01');
+var endInput = ui.Textbox('Date de fin (AAAA-MM-JJ)', '2023-01-31');
+
+panel.add(ui.Label('Début :'));
+panel.add(startInput);
+panel.add(ui.Label('Fin :'));
+panel.add(endInput);
+
+// --- 2. FONCTION DE TRAITEMENT ---
+var generateMosaic = function() {
+  var start = startInput.getValue();
+  var end = endInput.getValue();
+  
+  // Filtrage de la collection Sentinel-1 (Ground Range Detected)
+  var collection = ee.ImageCollection('COPERNICUS/S1_GRD')
+    .filterBounds(geometry)
+    .filterDate(start, end)
+    // Filtrage pour avoir la même configuration d'acquisition
+    .filter(ee.Filter.eq('instrumentMode', 'IW'))
+    .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+    .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'));
+
+  // Création de la mosaïque (Médiane pour réduire le "speckle" / grain radar)
+  var mosaic = collection.median().clip(geometry);
+  
+  // Création d'un ratio VV/VH pour la bande bleue (utile pour la structure de la végétation)
+  var ratio = mosaic.select('VV').divide(mosaic.select('VH')).rename('VV_VH');
+  var finalImage = mosaic.addBands(ratio);
+
+  // Paramètres de visualisation
+  // Le radar est exprimé en décibels (dB), souvent entre -25 et 0
+  var visParams = {
+    bands: ['VV', 'VH', 'VV_VH'],
+    min: [-20, -25, 0],
+    max: [0, -5, 2]
+  };
+
+  // Affichage
+  var layerName = 'S1 Radar RGB: ' + start + ' au ' + end;
+  Map.layers().set(0, ui.Map.Layer(finalImage, visParams, layerName));
+  Map.centerObject(geometry, 10);
+};
+
+// --- 3. BOUTON D'ACTION ---
+var button = ui.Button({
+  label: 'Générer la Mosaïque Radar',
+  onClick: generateMosaic
+});
+
+panel.add(button);
+ui.root.add(panel);
