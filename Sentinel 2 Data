@@ -1,0 +1,49 @@
+// --- 1. CONFIGURATION DU PANNEAU INTERACTIF ---
+var panel = ui.Panel({
+  style: {width: '250px', padding: '10px'}
+});
+
+panel.add(ui.Label('Paramètres de la Mosaïque', {fontWeight: 'bold', fontSize: '18px'}));
+
+var startInput = ui.Textbox('Date de début (AAAA-MM-JJ)', '2023-01-01');
+var endInput = ui.Textbox('Date de fin (AAAA-MM-JJ)', '2023-01-31');
+
+panel.add(ui.Label('Début :'));
+panel.add(startInput);
+panel.add(ui.Label('Fin :'));
+panel.add(endInput);
+
+// --- 2. FONCTION DE TRAITEMENT ---
+var generateMosaic = function() {
+  var start = startInput.getValue();
+  var end = endInput.getValue();
+  
+  // Filtrage et Mosaïquage
+  var collection = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+    .filterBounds(geometry)
+    .filterDate(start, end)
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30));
+
+  var mosaic = collection.median().clip(geometry);
+
+  var visParams = {
+    bands: ['B4', 'B3', 'B2'],
+    min: 0,
+    max: 3000,
+    gamma: 1.3
+  };
+
+  // Affichage
+  var layerName = 'Mosaïque du ' + start + ' au ' + end;
+  Map.layers().set(0, ui.Map.Layer(mosaic, visParams, layerName));
+  Map.centerObject(geometry, 12);
+};
+
+// --- 3. BOUTON D'ACTION ---
+var button = ui.Button({
+  label: 'Générer la Mosaïque',
+  onClick: generateMosaic
+});
+
+panel.add(button);
+ui.root.add(panel);
